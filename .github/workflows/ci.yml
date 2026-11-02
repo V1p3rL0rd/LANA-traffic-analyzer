@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Test core
+        run: swift test
+      - name: Build app bundle (ad-hoc signed)
+        run: bash Scripts/build-app.sh
+      - name: Lint scripts
+        run: |
+          brew install shellcheck >/dev/null
+          shellcheck -S warning Scripts/*.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANA.app
+          path: build/LANA.app
+          retention-days: 7
+
+  # The protocol core is platform-neutral: a second toolchain keeps the dissectors honest.
+  linux-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container: swift:5.10-noble
+    steps:
+      - uses: actions/checkout@v4
+      - run: apt-get update -qq && apt-get install -y -qq libpcap-dev
+      - run: swift test
