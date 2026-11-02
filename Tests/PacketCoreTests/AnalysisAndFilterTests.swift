@@ -20,9 +20,9 @@ final class AnomalyEngineTests: XCTestCase {
         XCTAssertTrue(keys(seg2).isDisjoint(with: ["tcp.analysis.retransmission"]))
 
         // Receiver ACKs 1100 three times → dup acks
-        _ = next(PB.tcpFrame(PB.ipB, PB.ipA, 80, 40000, seq: 1, ack: 1100, flags: F.ack))
-        let d1 = next(PB.tcpFrame(PB.ipB, PB.ipA, 80, 40000, seq: 1, ack: 1100, flags: F.ack))
-        let d2 = next(PB.tcpFrame(PB.ipB, PB.ipA, 80, 40000, seq: 1, ack: 1100, flags: F.ack))
+        _ = next(PB.tcpFrame(from: PB.ipB, to: PB.ipA, 80, 40000, seq: 1, ack: 1100, flags: F.ack))
+        let d1 = next(PB.tcpFrame(from: PB.ipB, to: PB.ipA, 80, 40000, seq: 1, ack: 1100, flags: F.ack))
+        let d2 = next(PB.tcpFrame(from: PB.ipB, to: PB.ipA, 80, 40000, seq: 1, ack: 1100, flags: F.ack))
         XCTAssertTrue(keys(d1).contains("tcp.analysis.duplicate_ack"))
         XCTAssertTrue(keys(d2).contains("tcp.analysis.duplicate_ack"))
         XCTAssertEqual(d2.summary.severity, .warning)
@@ -39,7 +39,7 @@ final class AnomalyEngineTests: XCTestCase {
         _ = proc.process(PB.tcpFrame(40000, 80, seq: 1, ack: 1, flags: F.ack, data))
         let gap = proc.process(PB.tcpFrame(40000, 80, seq: 500, ack: 1, flags: F.ack, data))
         XCTAssertTrue(keys(gap).contains("tcp.analysis.lost_segment"))
-        let zw = proc.process(PB.tcpFrame(PB.ipB, PB.ipA, 80, 40000, seq: 1, ack: 550, flags: F.ack, win: 0))
+        let zw = proc.process(PB.tcpFrame(from: PB.ipB, to: PB.ipA, 80, 40000, seq: 1, ack: 550, flags: F.ack, win: 0))
         XCTAssertTrue(keys(zw).contains("tcp.analysis.zero_window"))
         XCTAssertEqual(zw.summary.severity, .error)
     }
@@ -137,7 +137,10 @@ final class FilterTests: XCTestCase {
     }
 
     func testIPv6Formatting() {
-        XCTAssertEqual(Fmt.ipv6([0xfe, 0x80] + [UInt8](repeating: 0, count: 13) + [1]), "fe80::1")
+        var ll: [UInt8] = [0xfe, 0x80]
+        ll.append(contentsOf: [UInt8](repeating: 0, count: 13))
+        ll.append(1)
+        XCTAssertEqual(Fmt.ipv6(ll), "fe80::1")
         XCTAssertEqual(Fmt.ipv6([UInt8](repeating: 0, count: 16)), "::")
         XCTAssertEqual(Fmt.ipv6([0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]), "2001:db8:1::1")
     }

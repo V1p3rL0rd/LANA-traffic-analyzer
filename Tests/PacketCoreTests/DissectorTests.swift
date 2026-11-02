@@ -60,8 +60,9 @@ final class DissectorTests: XCTestCase {
 
     func testDNSCompressionLoopIsRejected() {
         // Name pointer pointing at itself must not hang.
-        var msg = PB.be16(1) + PB.be16(0x0100) + PB.be16(1) + PB.be16(0) + PB.be16(0) + PB.be16(0)
-        msg += [0xC0, 0x0C] + PB.be16(1) + PB.be16(1)
+        var msg: [UInt8] = []
+        for v: UInt16 in [1, 0x0100, 1, 0, 0, 0] { msg.append(contentsOf: PB.be16(v)) }
+        msg.append(contentsOf: [0xC0, 0x0C, 0, 1, 0, 1])
         let ctx = Dissector.dissect(PB.raw(PB.eth(0x0800, PB.ipv4(PB.ipA, PB.ipB, proto: 17, PB.udp(40000, 53, msg)))), number: 1)
         XCTAssertTrue(ctx.expert.contains { $0.key == "_ws.malformed" })
     }
@@ -75,7 +76,7 @@ final class DissectorTests: XCTestCase {
 
     func testHTTPErrorsAndBasicAuth() {
         let resp = Array("HTTP/1.1 503 Service Unavailable\r\nServer: nginx\r\n\r\n".utf8)
-        let c1 = Dissector.dissect(PB.tcpFrame(PB.ipB, PB.ipA, 80, 50000, seq: 1, ack: 1, flags: F.ack | F.psh, resp), number: 1)
+        let c1 = Dissector.dissect(PB.tcpFrame(from: PB.ipB, to: PB.ipA, 80, 50000, seq: 1, ack: 1, flags: F.ack | F.psh, resp), number: 1)
         XCTAssertEqual(c1.protocolName, "HTTP")
         XCTAssertTrue(c1.expert.contains { $0.severity == .error && $0.group == .response })
 
