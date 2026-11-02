@@ -55,12 +55,14 @@ sudo bash Scripts/install-chmodbpf.sh      # then log out and back in
 # 2. Core tests
 swift test
 
-# 3. Build the app (arm64, ad-hoc signed, icon from Assets/)
-bash Scripts/build-app.sh
-open build/LANA.app
+# 3. Build and install to /Applications (Launchpad, Spotlight, Dock)
+bash Scripts/build-app.sh --install
+open "/Applications/LANA Traffic Analyzer.app"
+
+# or build only: bash Scripts/build-app.sh  ->  build/LANA Traffic Analyzer.app
 ```
 
-Build as your own user, not root — otherwise `.build/` and `build/` become root‑owned and later builds fail with `Permission denied`. Universal (arm64 + x86_64) builds need full Xcode: `UNIVERSAL=1 bash Scripts/build-app.sh`.
+Build as your own user, not root — otherwise `.build/` and `build/` become root‑owned and later builds fail with `Permission denied`. Universal (arm64 + x86_64) builds need full Xcode: `bash Scripts/build-app.sh --universal`.
 
 > ⚠️ App Sandbox is disabled on purpose: sandboxed apps cannot open `/dev/bpf*`. Distribution is outside the App Store only (Developer ID + notarization).
 >

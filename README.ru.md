@@ -16,7 +16,7 @@
 
 ---
 
-SwiftUI + AppKit, libpcap, собственные диссекторы на Swift. macOS 14+, Apple Silicon (Intel — через `UNIVERSAL=1` при наличии полного Xcode).
+SwiftUI + AppKit, libpcap, собственные диссекторы на Swift. macOS 14+, Apple Silicon (Intel — через `--universal` при наличии полного Xcode).
 
 ## Архитектура
 
@@ -97,12 +97,15 @@ sudo bash Scripts/install-chmodbpf.sh
 # 2. Тесты ядра
 swift test
 
-# 3. Сборка .app (arm64, ad-hoc подпись, иконка из Assets/)
+# 3. Сборка и установка в /Applications (Launchpad, Spotlight, Dock)
+bash Scripts/build-app.sh --install
+open "/Applications/LANA Traffic Analyzer.app"
+
+# Только сборка, без установки: build/LANA Traffic Analyzer.app
 bash Scripts/build-app.sh
-open build/LANA.app
 
 # Universal (arm64 + x86_64) — только с полным Xcode:
-UNIVERSAL=1 bash Scripts/build-app.sh
+bash Scripts/build-app.sh --universal
 
 # Подпись Developer ID для распространения:
 SIGN_IDENTITY="Developer ID Application: Org (TEAMID)" ./Scripts/build-app.sh
@@ -153,7 +156,7 @@ swift test
 
 # 3. сверка с эталоном (нужен tcpdump/tshark)
 sudo tcpdump -i en0 -c 2000 -w /tmp/ref.pcap
-# открыть /tmp/ref.pcap в LANA (⌘O); число пакетов должно совпасть с:
+# открыть /tmp/ref.pcap в LANA Traffic Analyzer (⌘O); число пакетов должно совпасть с:
 tcpdump -r /tmp/ref.pcap 2>/dev/null | wc -l
 
 # 4. проверка подсветки аномалий
@@ -167,7 +170,7 @@ dig nonexistent.invalid                  # NXDOMAIN → жёлтая строк�
 - **Потери пакетов:** статус-бар показывает «Потеряно ядром» (`pcap_stats` ps_drop + ps_ifdrop). Если растёт — сузьте фильтр захвата: BPF отбрасывает лишнее в ядре. Буфер 16 МБ ограничен `sysctl debug.bpf_maxbufsize`.
 - **Память:** лимит пакетов настраивается (по умолчанию 2 млн). При достижении захват останавливается с уведомлением — сохраните pcap и начните заново. Для многочасовых захватов используйте `tcpdump -G/-C` с ротацией и открывайте файлы в LANA.
 - **Откат прав:** `sudo ./Scripts/uninstall-chmodbpf.sh [--remove-group]`. Если установлен ChmodBPF от Wireshark, права и группа не трогаются.
-- **CI:** `.github/workflows/ci.yml` — тесты и сборка `.app` на macOS плюс тесты ядра на Linux (Swift 5.10).
+- **CI:** `.github/workflows/ci.yml` — тесты и сборка `LANA Traffic Analyzer.app` на macOS плюс тесты ядра на Linux (Swift 5.10).
 
 ## Структура
 

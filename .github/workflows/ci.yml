@@ -30,8 +30,8 @@ jobs:
           shellcheck -S warning Scripts/*.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: LANA.app
-          path: build/LANA.app
+          name: LANA-Traffic-Analyzer.app
+          path: build/LANA Traffic Analyzer.app
           retention-days: 7
 
   # The protocol core is platform-neutral: a second toolchain keeps the dissectors honest.
