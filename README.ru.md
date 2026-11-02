@@ -83,39 +83,58 @@ SwiftUI + AppKit, libpcap, собственные диссекторы на Swif
 
 \* Проверка checksum по умолчанию выключена: на macOS исходящие пакеты захватываются до checksum offload и выглядят «битыми». Включается в параметрах захвата.
 
-## Установка и сборка
+## Установка готовой версии
 
-Требования: macOS 14+ и Command Line Tools (`xcode-select --install`). Полный Xcode не обязателен: интерфейс не использует SwiftUI-макросы (`@State`, `#Preview`), плагины которых поставляются только с Xcode.
+1. Скачайте `LANA-Traffic-Analyzer-<версия>-macOS.zip` со страницы [Releases](../../releases) и распакуйте.
+2. Перенесите **LANA Traffic Analyzer.app** в «Программы».
+3. Приложение подписано ad-hoc и не нотаризовано, поэтому при первом запуске Gatekeeper его заблокирует. Откройте через ПКМ → «Открыть», или через *Системные настройки → Конфиденциальность и безопасность → «Всё равно открыть»*, или командой:
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/LANA Traffic Analyzer.app"
+   ```
+4. Дайте доступ к захвату пакетов (один раз) — см. [Доступ к захвату пакетов](#доступ-к-захвату-пакетов). Если у вас установлен Wireshark с ChmodBPF, доступ уже есть.
 
-> Собирайте под своим пользователем, не под root: иначе `.build/` и `build/` станут принадлежать root и следующая сборка упадёт с `Permission denied`.
+## Сборка из исходников
+
+Нужны macOS 14+ и Xcode Command Line Tools (`xcode-select --install`) — Swift 5.9 или новее. Полный Xcode не обязателен: интерфейс не использует SwiftUI-макросы (`@State`, `#Preview`), плагины которых поставляются только с Xcode.
 
 ```bash
-# 1. Доступ к BPF без root (один раз; идемпотентно; совместимо с ChmodBPF от Wireshark)
-sudo bash Scripts/install-chmodbpf.sh
-# выйти из системы и войти снова — чтобы применилась группа access_bpf
-
-# 2. Тесты ядра
-swift test
-
-# 3. Сборка и установка в /Applications (Launchpad, Spotlight, Dock)
-bash Scripts/build-app.sh --install
+git clone https://github.com/V1p3rL0rd/LANA-traffic-analyzer.git && cd LANA-traffic-analyzer
+./Scripts/build-app.sh            # → "build/LANA Traffic Analyzer.app" (ad-hoc подпись)
+./Scripts/build-app.sh --install  # + установка в /Applications (INSTALL_DIR=~/Applications — только для себя)
 open "/Applications/LANA Traffic Analyzer.app"
-
-# Только сборка, без установки: build/LANA Traffic Analyzer.app
-bash Scripts/build-app.sh
-
-# Universal (arm64 + x86_64) — только с полным Xcode:
-bash Scripts/build-app.sh --universal
-
-# Подпись Developer ID для распространения:
-SIGN_IDENTITY="Developer ID Application: Org (TEAMID)" ./Scripts/build-app.sh
 ```
 
-Для разработки (если Xcode установлен): `open Package.swift` → схема `LANA` → Run.
+| Команда | Результат |
+|---|---|
+| `./Scripts/build-app.sh` | `build/LANA Traffic Analyzer.app` под архитектуру вашего Mac |
+| `./Scripts/build-app.sh --install` | сборка + установка в `/Applications` (появится в Launchpad и Spotlight) |
+| `./Scripts/build-app.sh --universal` | бинарь arm64 + x86_64 (нужен полный Xcode) |
+| `INSTALL_DIR=~/Applications ./Scripts/build-app.sh --install` | установка только для текущего пользователя |
+| `swift test` | юнит-тесты ядра |
 
-> ⚠️ App Sandbox отключён намеренно: из sandbox открыть `/dev/bpf*` нельзя. Поэтому дистрибуция только вне App Store (Developer ID + notarization).
+Собирайте под своим пользователем, не под root: скрипт откажется работать от root, потому что `.build/` и `build/` стали бы принадлежать root и следующая сборка упала бы с `Permission denied`.
 
-> ⚠️ Любой член группы `access_bpf` может прослушивать весь трафик хоста. Добавляйте туда только доверенные учётные записи.
+## Доступ к захвату пакетов
+
+Захват идёт через `/dev/bpf*`, а они по умолчанию доступны только root. Запускать GUI под root плохая идея, поэтому используется та же схема, что у Wireshark: группа `access_bpf` и служба, которая при загрузке выдаёт этой группе права на BPF-устройства.
+
+```bash
+sudo ./Scripts/install-chmodbpf.sh      # идемпотентно; совместимо с ChmodBPF от Wireshark
+# выйдите из системы и войдите снова, чтобы применилась группа access_bpf
+ls -l /dev/bpf0                         # crw-rw----  root  access_bpf
+```
+
+Откат: `sudo ./Scripts/uninstall-chmodbpf.sh [--remove-group]`. Если установлен ChmodBPF от Wireshark, права и группа не трогаются.
+
+## Важно знать (ограничения и подводные камни)
+
+1. **App Sandbox отключён намеренно:** из sandbox открыть `/dev/bpf*` нельзя. Поэтому дистрибуция только вне App Store.
+2. **Группа `access_bpf`** даёт право прослушивать весь трафик хоста. Добавляйте туда только доверенные учётные записи.
+3. **Контрольные суммы** по умолчанию не проверяются: исходящие пакеты на macOS захватываются до checksum offload и выглядели бы «битыми». Включается в параметрах захвата.
+4. **Память.** Пакеты хранятся в памяти (по умолчанию до 2 млн), при достижении лимита захват останавливается с уведомлением. Для многочасовых захватов используйте `tcpdump -G/-C` с ротацией и открывайте файлы в LANA Traffic Analyzer.
+5. **Фрагменты IP и TCP-потоки не собираются:** протокол, сообщение которого разбито на несколько сегментов, разбирается по первому сегменту.
+6. **Monitor mode** (802.11) доступен только для Wi-Fi-интерфейса и на время захвата отключает его от сети.
+7. **Юридически:** анализируйте только сети, на которые у вас есть права.
 
 ## Работа с программой
 
@@ -164,13 +183,12 @@ curl -s http://127.0.0.1:1 || true      # RST → красная строка (�
 dig nonexistent.invalid                  # NXDOMAIN → жёлтая строка
 ```
 
-## Day-2
+## Эксплуатация
 
-- **Логи:** `log stream --predicate 'subsystem == "app.lana"'` (os.Logger: старт/стоп захвата, ошибки pcap).
-- **Потери пакетов:** статус-бар показывает «Потеряно ядром» (`pcap_stats` ps_drop + ps_ifdrop). Если растёт — сузьте фильтр захвата: BPF отбрасывает лишнее в ядре. Буфер 16 МБ ограничен `sysctl debug.bpf_maxbufsize`.
-- **Память:** лимит пакетов настраивается (по умолчанию 2 млн). При достижении захват останавливается с уведомлением — сохраните pcap и начните заново. Для многочасовых захватов используйте `tcpdump -G/-C` с ротацией и открывайте файлы в LANA.
-- **Откат прав:** `sudo ./Scripts/uninstall-chmodbpf.sh [--remove-group]`. Если установлен ChmodBPF от Wireshark, права и группа не трогаются.
-- **CI:** `.github/workflows/ci.yml` — тесты и сборка `LANA Traffic Analyzer.app` на macOS плюс тесты ядра на Linux (Swift 5.10).
+- **Логи:** `log stream --predicate 'subsystem == "app.lana"'` (старт/стоп захвата, ошибки pcap).
+- **Потери пакетов:** строка состояния показывает «Потеряно ядром» (`pcap_stats` ps_drop + ps_ifdrop). Если растёт — сузьте фильтр захвата: BPF отбрасывает лишнее в ядре. Буфер 16 МБ ограничен `sysctl debug.bpf_maxbufsize`.
+- **Откат:** приложение не хранит ничего критичного. Удалить: `/Applications/LANA Traffic Analyzer.app`, настройки — `defaults delete app.lana.LANA`, права на BPF — `sudo ./Scripts/uninstall-chmodbpf.sh`.
+- **Обновление:** `git pull && ./Scripts/build-app.sh --install` — старая версия в `/Applications` заменяется атомарно.
 
 ## Структура
 
@@ -183,9 +201,14 @@ Sources/PacketCore/        платформенно-независимое яд�
   Filter/                  ProtocolCatalog, CaptureFilter (→BPF), DisplayFilter
 Sources/LANA/              SwiftUI-приложение
 Tests/PacketCoreTests/     XCTest
-Scripts/                   install/uninstall-chmodbpf.sh, build-app.sh
-Assets/                    иконка (AppIcon.svg — исходник, .png, .icns)
+Scripts/                   build-app.sh, install/uninstall-chmodbpf.sh
+Assets/                    иконка (исходник SVG + .png + .icns)
+.github/workflows/         CI (тесты + сборка) и релиз (опубликованный релиз → zip с .app)
 ```
+
+## Релиз
+
+Откройте **Releases → Draft a new release**, создайте тег, например `v1.0.0`, нажмите **Generate release notes** и **Publish**. Через несколько минут GitHub Actions соберёт universal-приложение и прикрепит к релизу `LANA-Traffic-Analyzer-<версия>-macOS.zip` с контрольной суммой SHA-256.
 
 ## Лицензия
 

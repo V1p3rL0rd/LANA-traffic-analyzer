@@ -1,0 +1,61 @@
+name: Release
+
+# Publish a release in the GitHub UI (Releases → Draft a new release → tag vX.Y.Z → Publish)
+# and this workflow builds the universal app and attaches the zip to that release.
+# Manual runs (workflow_dispatch) build the same zip and keep it as a workflow artifact only.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-attach:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.event.release.tag_name || 'v0.0.0-dev' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - name: Unit tests
+        run: swift test
+
+      - name: Build universal app bundle
+        run: VERSION="${TAG#v}" ./Scripts/build-app.sh --universal
+
+      - name: Verify bundle
+        run: |
+          APP="build/LANA Traffic Analyzer.app"
+          lipo -archs "$APP/Contents/MacOS/LANA"
+          test -f "$APP/Contents/Resources/AppIcon.icns"
+          codesign --verify --strict "$APP"
+          plutil -p "$APP/Contents/Info.plist" | grep -E "CFBundleShortVersionString|CFBundleIconFile"
+
+      - name: Package
+        id: pkg
+        run: |
+          ZIP="LANA-Traffic-Analyzer-${TAG#v}-macOS.zip"
+          ditto -c -k --keepParent "build/LANA Traffic Analyzer.app" "$ZIP"
+          shasum -a 256 "$ZIP" > "$ZIP.sha256"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "${{ steps.pkg.outputs.zip }}" "${{ steps.pkg.outputs.zip }}.sha256" --clobber
+
+      - name: Keep as artifact (manual run)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.zip }}
+          path: |
+            ${{ steps.pkg.outputs.zip }}
+            ${{ steps.pkg.outputs.zip }}.sha256
+          retention-days: 7

@@ -6,6 +6,7 @@
 #   Scripts/build-app.sh --universal     # arm64 + x86_64 (requires full Xcode, not just CLT)
 #
 #   SIGN_IDENTITY="Developer ID Application: …" Scripts/build-app.sh   # default: ad-hoc
+#   VERSION=1.2.0 Scripts/build-app.sh                                   # stamp the bundle version
 #
 # Idempotent: every run rebuilds the bundle in a temp dir and atomically replaces the old one.
 set -euo pipefail
@@ -62,13 +63,15 @@ else
 fi
 
 swift build -c release ${ARCH_ARGS[@]+"${ARCH_ARGS[@]}"}
-# Multi-arch builds go through xcbuild and land in .build/apple; --show-bin-path is unreliable there.
-if [[ ${#ARCH_ARGS[@]} -gt 0 ]]; then
-    BIN_DIR="${ROOT}/.build/apple/Products/Release"
-else
-    BIN_DIR="$(swift build -c release --show-bin-path)"
-fi
-[[ -x "${BIN_DIR}/${EXEC_NAME}" ]] || die "binary not found in ${BIN_DIR}"
+# Multi-arch output location differs between SwiftPM build systems; probe the known ones.
+BIN_DIR=""
+for candidate in \
+    "$(swift build -c release ${ARCH_ARGS[@]+"${ARCH_ARGS[@]}"} --show-bin-path 2>/dev/null || true)" \
+    "${ROOT}/.build/apple/Products/Release" \
+    "${ROOT}/.build/out/Products/Release"; do
+    if [[ -n "${candidate}" && -x "${candidate}/${EXEC_NAME}" ]]; then BIN_DIR="${candidate}"; break; fi
+done
+[[ -n "${BIN_DIR}" ]] || die "binary ${EXEC_NAME} not found after build"
 
 mkdir -p "${OUT_DIR}"
 STAGE="$(mktemp -d "${OUT_DIR}/.stage.XXXXXX")"
@@ -76,6 +79,10 @@ BUNDLE="${STAGE}/${APP_NAME}.app"
 mkdir -p "${BUNDLE}/Contents/MacOS" "${BUNDLE}/Contents/Resources"
 cp "${BIN_DIR}/${EXEC_NAME}" "${BUNDLE}/Contents/MacOS/${EXEC_NAME}"
 cp "${ROOT}/Resources/Info.plist" "${BUNDLE}/Contents/Info.plist"
+if [[ -n "${VERSION:-}" ]]; then
+    plutil -replace CFBundleShortVersionString -string "${VERSION}" "${BUNDLE}/Contents/Info.plist"
+    plutil -replace CFBundleVersion -string "${VERSION}" "${BUNDLE}/Contents/Info.plist"
+fi
 plutil -lint "${BUNDLE}/Contents/Info.plist" >/dev/null
 
 # App icon (source: Assets/AppIcon.svg, same visual language as LANA Scanner).

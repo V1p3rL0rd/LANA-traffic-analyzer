@@ -44,29 +44,80 @@ LANA Traffic Analyzer captures packets on any macOS interface (Ethernet, Wi‑Fi
 
 \* Checksum validation is off by default: macOS captures outgoing packets before checksum offload.
 
-## Build & install
+## Install
 
-Requirements: macOS 14+ and Command Line Tools (`xcode-select --install`). Full Xcode is **not** required.
+### Option 1: download a release
+
+1. Download `LANA-Traffic-Analyzer-<version>-macOS.zip` from the [Releases](../../releases) page and unzip it.
+2. Move **LANA Traffic Analyzer.app** to **Applications**.
+3. The app is ad‑hoc signed, not notarized, so the first launch is blocked by Gatekeeper. Either right‑click → **Open**, or use *System Settings → Privacy & Security → Open Anyway*, or run:
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/LANA Traffic Analyzer.app"
+   ```
+4. Grant packet‑capture access once — see [Capture permissions](#capture-permissions). If Wireshark with ChmodBPF is installed, you already have it.
+
+### Option 2: build from source
+
+Requires macOS 14+ and the Command Line Tools (`xcode-select --install`), Swift 5.9+. Full Xcode is **not** required.
 
 ```bash
-# 1. BPF access without root (once; idempotent; compatible with Wireshark's ChmodBPF)
-sudo bash Scripts/install-chmodbpf.sh      # then log out and back in
-
-# 2. Core tests
-swift test
-
-# 3. Build and install to /Applications (Launchpad, Spotlight, Dock)
-bash Scripts/build-app.sh --install
-open "/Applications/LANA Traffic Analyzer.app"
-
-# or build only: bash Scripts/build-app.sh  ->  build/LANA Traffic Analyzer.app
+git clone https://github.com/V1p3rL0rd/LANA-traffic-analyzer.git && cd LANA-traffic-analyzer
+./Scripts/build-app.sh --install        # builds and installs "/Applications/LANA Traffic Analyzer.app"
 ```
 
-Build as your own user, not root — otherwise `.build/` and `build/` become root‑owned and later builds fail with `Permission denied`. Universal (arm64 + x86_64) builds need full Xcode: `bash Scripts/build-app.sh --universal`.
+| Command | Result |
+|---|---|
+| `./Scripts/build-app.sh` | `build/LANA Traffic Analyzer.app` for the host architecture |
+| `./Scripts/build-app.sh --install` | build + install to `/Applications` (shows up in Launchpad and Spotlight) |
+| `./Scripts/build-app.sh --universal` | arm64 + x86_64 binary (needs full Xcode) |
+| `INSTALL_DIR=~/Applications ./Scripts/build-app.sh --install` | install for the current user only |
+| `swift test` | core unit tests |
 
-> ⚠️ App Sandbox is disabled on purpose: sandboxed apps cannot open `/dev/bpf*`. Distribution is outside the App Store only (Developer ID + notarization).
->
-> ⚠️ Every member of the `access_bpf` group can sniff all traffic on the host. Add trusted accounts only. Roll back with `sudo bash Scripts/uninstall-chmodbpf.sh`.
+Build as your own user, not root: the script refuses to run as root, because `.build/` and `build/` would become root‑owned and later builds would fail with `Permission denied`.
+
+## Capture permissions
+
+Capturing goes through `/dev/bpf*`, which only root can open by default. Running a GUI as root is a bad idea, so LANA uses the same scheme as Wireshark: an `access_bpf` group plus a launch daemon that grants it access to the BPF devices at boot.
+
+```bash
+sudo ./Scripts/install-chmodbpf.sh      # idempotent; compatible with Wireshark's ChmodBPF
+# log out and back in so the access_bpf membership takes effect
+ls -l /dev/bpf0                         # crw-rw----  root  access_bpf
+```
+
+Roll back with `sudo ./Scripts/uninstall-chmodbpf.sh [--remove-group]`. If Wireshark's ChmodBPF is installed, permissions and the group are left alone.
+
+## How it works
+
+```
+ /dev/bpf* ──► libpcap (CaptureEngine, capture thread)
+                   │  RawPacket batches (pcap_dispatch, immediate mode)
+                   ▼
+        CapturePipeline (serial analysis queue)
+          Dissector (stateless, L2→L7)  ──►  AnomalyEngine (stateful: TCP, ARP, scans)
+          + live display filter                     │ ExpertInfo (error / warning / note)
+                   │  pending buffer (lock)         ▼
+                   ▼
+        CaptureSession (@MainActor, drained at 4 Hz) ──► NSTableView (row highlighting)
+                                                     ├─► protocol tree + hex (re‑dissected on click)
+                                                     └─► anomalies panel (aggregates)
+```
+
+- **No root at runtime.** BPF access comes from the `access_bpf` group; the capture filter is compiled by `pcap_compile` and runs in the kernel.
+- **Own dissectors.** No GPL dependencies and no Wireshark install; ~45 protocols are parsed in depth, the rest of the 185‑protocol catalog is identified by port / EtherType.
+- **Low memory.** Only the raw frame and a compact summary are kept per packet; the protocol tree is rebuilt on selection.
+- **Responsive UI.** Dissection and analysis run off the main thread; NSTableView handles millions of rows with full‑row colouring.
+
+## Things to know
+
+- **App Sandbox is disabled on purpose:** sandboxed apps cannot open `/dev/bpf*`, so distribution is outside the App Store only.
+- **`access_bpf` membership** lets an account sniff all traffic on the host. Add trusted accounts only.
+- **Checksums** are not validated by default: macOS captures outgoing packets before checksum offload, so they would look broken. Enable it in capture options.
+- **Memory.** Packets are kept in memory (2 million by default); capture stops with a notice at the limit. For multi‑hour captures use `tcpdump -G/-C` rotation and open the files in LANA.
+- **No IP/TCP reassembly:** a message split across several segments is dissected from its first segment.
+- **Monitor mode** (802.11) works on the Wi‑Fi interface only and disconnects it from the network while capturing.
+
+> **Only analyze networks you own or are explicitly authorized to monitor.**
 
 ## Project layout
 
@@ -80,10 +131,22 @@ Sources/PacketCore/     platform‑neutral core (also builds and tests on Linux)
 Sources/LANA/           SwiftUI + AppKit app
 Tests/PacketCoreTests/  XCTest: dissectors, TCP analysis, filters, pcap round‑trip, fuzzing
 Scripts/                build-app.sh, install/uninstall-chmodbpf.sh
-Assets/                 app icon (AppIcon.svg source, .png, .icns)
+Assets/                 app icon (SVG source + .png + .icns)
+.github/workflows/      CI (tests + build) and release (published release → zipped .app attached)
 ```
 
-Detailed architecture, filter syntax and operations notes: [README.ru.md](README.ru.md).
+Display‑filter syntax, the full anomaly list and verification steps: [README.ru.md](README.ru.md).
+
+## Maintenance
+
+- **Logs:** `log stream --predicate 'subsystem == "app.lana"'` (capture start/stop, pcap errors).
+- **Dropped packets:** the status bar shows kernel drops (`pcap_stats`). If they grow, narrow the capture filter — BPF discards unwanted traffic in the kernel.
+- **Update:** `git pull && ./Scripts/build-app.sh --install` atomically replaces the installed app.
+- **Uninstall:** delete `/Applications/LANA Traffic Analyzer.app`, run `defaults delete app.lana.LANA` and `sudo ./Scripts/uninstall-chmodbpf.sh`.
+
+## Releasing
+
+Open **Releases → Draft a new release**, create a tag such as `v1.0.0`, click **Generate release notes** and **Publish**. GitHub Actions then builds a universal app and attaches `LANA-Traffic-Analyzer-<version>-macOS.zip` (plus a SHA-256 checksum) to the release within a few minutes.
 
 ## License
 
